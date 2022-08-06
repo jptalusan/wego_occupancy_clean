@@ -362,3 +362,6 @@ spark-warehouse/
 *.png
 *.txt
 *.sav
+*.parquet
+*.part*
+notebooks/data

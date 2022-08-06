@@ -202,12 +202,6 @@ def prepare_linklevel(df, train_dates=None, val_dates=None, test_dates=None,
     ohe_encoder = OneHotEncoder()
     ohe_encoder = ohe_encoder.fit(df[ohe_columns])
     df[ohe_encoder.get_feature_names_out()] = ohe_encoder.transform(df[ohe_columns]).toarray()
-    
-    # for col in ohe_columns:
-    #     rid = pd.get_dummies(df[col])
-    #     rid.columns = [f"{col}_{i}" for i in rid.columns]
-    #     df = pd.concat([df, rid], axis=1)
-        
     df = df.drop(ohe_columns, axis=1)
         
     train_df = df[(df[time_feature_used] >= train_dates[0]) &\
@@ -249,9 +243,6 @@ def prepare_linklevel(df, train_dates=None, val_dates=None, test_dates=None,
     test_df[num_columns] = scaler.transform(test_df[num_columns])
 
     return ohe_encoder, label_encoders, scaler, train_df, val_df, test_df
-
-
-
 
 '''
 # usage:

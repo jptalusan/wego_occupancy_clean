@@ -6,26 +6,32 @@ import math
 import joblib
 import numpy as np
 
-def get_time_window(row, window):
-    minute = row.arrival_time.minute
-    minuteByWindow = minute//window
-    temp = minuteByWindow + (row.arrival_time.hour * (60/window))
-    return math.floor(temp)
-
 def generate_new_features(tdf, time_window=30, past_trips=20, target='y_reg'):
     tdf['day'] = tdf.transit_date.dt.day
-    tdf['time_window'] = tdf.apply(lambda x: get_time_window(x, time_window), axis=1)
+    # tdf['time_window'] = tdf.apply(lambda x: get_time_window(x, time_window), axis=1)
+    tdf['minute'] = tdf['arrival_time'].dt.minute
+    tdf['minuteByWindow'] = tdf['minute'] // time_window
+    tdf['temp'] = tdf['minuteByWindow'] + (tdf['hour'] * 60 / time_window)
+    tdf['time_window'] = np.floor(tdf['temp']).astype('int')
+    tdf = tdf.drop(columns=['minute', 'minuteByWindow', 'temp'])
 
     sort2 = ['block_abbr', 'transit_date', 'arrival_time', 'route_id_direction']
     tdf = tdf.sort_values(sort2)
     tdf = tdf.dropna()
     return tdf
 
+# Generates: load_pct_change, act_headway_pct_change, avg_past_act_headway, avg_past_trips_loads
 def generate_new_day_ahead_features(tdf, time_window=30, past_trips=20, target='y_reg'):
     tdf['day'] = tdf.transit_date.dt.day
-    tdf['time_window'] = tdf.apply(lambda x: get_time_window(x, time_window), axis=1)
+    # tdf['time_window'] = tdf.apply(lambda x: get_time_window(x, time_window), axis=1)
+    
+    tdf['minute'] = tdf['arrival_time'].dt.minute
+    tdf['minuteByWindow'] = tdf['minute'] // time_window
+    tdf['temp'] = tdf['minuteByWindow'] + (tdf['hour'] * 60 / time_window)
+    tdf['time_window'] = np.floor(tdf['temp']).astype('int')
+    tdf = tdf.drop(columns=['minute', 'minuteByWindow', 'temp'])
 
-    sort2 = ['block_abbr', 'transit_date', 'arrival_time', 'route_id_direction']
+    sort2 = ['transit_date', 'arrival_time', 'route_id_direction', 'block_abbr']
     tdf = tdf.sort_values(sort2)
 
     tdf['avg_actual_headway_lag'] = tdf['actual_headways'].shift(1)

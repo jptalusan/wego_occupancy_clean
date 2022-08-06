@@ -2,6 +2,13 @@ from src.config import *
 import numpy as np
 from pyspark.sql.types import DoubleType
 from pyspark.sql import functions as F
+import math
+
+def get_time_window(row, window):
+    minute = row.arrival_time.minute
+    minuteByWindow = minute//window
+    temp = minuteByWindow + (row.arrival_time.hour * (60/window))
+    return math.floor(temp)
 
 def add_block_tripids(df):
     temp = df[['transit_date', 'block_abbr', 'trip_id']].groupby(by=['transit_date', 'block_abbr']).agg(list).reset_index()
