@@ -152,9 +152,6 @@ overall_df = overall_df.groupby(['transit_date',
 overall_df = overall_df.reset_index(level=[0,1,2,3])
 overall_df = overall_df.sort_values(by=['block_abbr', 'arrival_time']).reset_index(drop=True)
 
-print("Overall shape.")
-print(overall_df.shape)
-overall_df[100:120]
 drop_cols = ['arrival_time', 'block_abbr']
 drop_cols = [col for col in drop_cols if col in overall_df.columns]
 overall_df = overall_df.drop(drop_cols, axis=1)

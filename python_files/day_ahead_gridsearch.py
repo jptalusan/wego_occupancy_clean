@@ -26,6 +26,7 @@ df = df.dropna()
 # Removing time_window in case a different one will be used
 df = df.drop(['time_window', 'load'], axis=1)
 df = df.reset_index(drop=True)
+df = df.sort_values(['block_abbr', 'transit_date', 'arrival_time', 'route_id_direction'])
 
 FOLDS = 5
 RANDOM_SEED = 100

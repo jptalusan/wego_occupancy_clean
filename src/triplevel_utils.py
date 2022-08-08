@@ -29,7 +29,7 @@ def generate_new_day_ahead_features(tdf, time_window=30, past_trips=20, target='
     tdf['minuteByWindow'] = tdf['minute'] // time_window
     tdf['temp'] = tdf['minuteByWindow'] + (tdf['hour'] * 60 / time_window)
     tdf['time_window'] = np.floor(tdf['temp']).astype('int')
-    tdf = tdf.drop(columns=['minute', 'minuteByWindow', 'temp'])
+    tdf = tdf.drop(columns=['minute', 'minuteByWindow', 'temp'], axis=1)
 
     sort2 = ['transit_date', 'arrival_time', 'route_id_direction', 'block_abbr']
     tdf = tdf.sort_values(sort2)
