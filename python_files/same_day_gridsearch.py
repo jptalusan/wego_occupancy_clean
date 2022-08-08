@@ -180,8 +180,6 @@ num_columns = ['darksky_temperature', 'darksky_humidity', 'darksky_precipitation
 cat_columns = ['month', 'hour', 'day', 'stop_sequence', 'stop_id_original', 'year', 'time_window', target]
 ohe_columns = ['dayofweek', 'route_id_dir', 'is_holiday']
 
-print(overall_df.shape)
-print(overall_df.head())
 ohe_encoder, label_encoder, num_scaler, train_df, val_df, test_df = linklevel_utils.prepare_linklevel(overall_df, 
                                                                                                       train_dates=train_dates, 
                                                                                                       val_dates=val_dates, 
@@ -220,7 +218,6 @@ def generate_simple_lstm_predictions(input_df, model, future):
 
 PAST = 5
 fp = os.path.join('../models/same_day/evaluation/random_trip_ids_2000.pkl')
-# fp = os.path.join('data/STOPLEVEL_RESULTS', 'random_trip_ids_2000.pkl')
 with open(fp, 'rb') as f:
     random_trip_ids = pickle.load(f)
     
@@ -250,5 +247,50 @@ for unique_trip_id in tqdm(random_trip_ids):
     results.append(res_df)
     
 res_df = pd.concat(results)
-fp = os.path.join('../models/same_day/evaluation', 'SIMPLE_LSTM_multi_stop_10P_xF_results.pkl')
+fp = os.path.join('../models/same_day/evaluation', f'SIMPLE_LSTM_multi_stop_{PAST}P_xF_results.pkl')
+res_df.to_pickle(fp)
+
+
+# Get max of past loads from the same stop sequence/trip/
+def generate_stop_level_baseline(unique_trip_id, past, future, lookback=10):
+    trip_id = unique_trip_id.split("_")[0]
+    transit_date = unique_trip_id.split("_")[1]
+    
+    _df = df[(df['trip_id'] == trip_id) & (df['transit_date'] == transit_date)]
+    route_id_dir = _df['route_id_dir'].values[0]
+    hour = _df['hour'].values[0]
+    block_abbr = _df['block_abbr'].values[0]
+    dayofweek = _df['dayofweek'].values[0]
+    
+    prediction_max = []
+    prediction_ave = []
+    for stop_sequence in range(future):
+        load = df[(df['route_id_dir'] == route_id_dir) & 
+                      (df['stop_sequence'] == stop_sequence) & 
+                      (df['hour'] == hour) & 
+                      (df['block_abbr'] == block_abbr) & 
+                      (df['dayofweek'] == dayofweek)].sort_values(by='transit_date')[-lookback:]['load']
+        max_load = load.max()
+        ave_load = load.mean()
+        y_pred = data_utils.get_class(max_load, percentiles)
+        prediction_max.append(y_pred)
+        y_pred = data_utils.get_class(ave_load, percentiles)
+        prediction_ave.append(y_pred)
+    return prediction_max, prediction_ave
+
+PAST = 10
+results = []
+for unique_trip_id in tqdm(random_trip_ids):
+    trip_df = test_df[test_df['unique_trip'] == unique_trip_id]
+    if trip_df.empty:
+        continue
+    future = len(trip_df) - PAST
+    y_true = trip_df.iloc[PAST:].y_class.tolist()
+    y_pred_max, y_pred_ave = generate_stop_level_baseline(unique_trip_id, PAST, future)
+    res_df = pd.DataFrame(np.column_stack(([unique_trip_id]*future, y_true, y_pred_max, y_pred_ave)), columns=['trip_id', 'y_true', 'y_pred_max', 'y_pred_ave'])
+    results.append(res_df)
+
+res_df = pd.concat(results)
+
+fp = os.path.join('../models/same_day/evaluation', f'baseline_multi_stop_{PAST}P_xF_results.pkl')
 res_df.to_pickle(fp)
