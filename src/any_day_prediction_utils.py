@@ -63,7 +63,10 @@ def load_speed_data(path='data/traffic/triplevel_speed.pickle'):
     speed_df = speed_df.reset_index(level=[0,1])
     return speed_df
 
-def setup_any_day_data(DATE_TO_PREDICT, past_df, darksky, holidays_df, speed_df, TARGET='load'):
+def load_school_break_data(path='data/others/School Breaks (2019-2022).pkl'):
+    return pd.read_pickle(path)
+    
+def setup_any_day_data(DATE_TO_PREDICT, past_df, darksky, holidays_df, school_break_df, speed_df, TARGET='load'):
     DAY_OF_WEEK = convert_pandas_dow_to_pyspark(pd.Timestamp(DATE_TO_PREDICT).day_of_week)
     a = past_df.groupby(['route_id_direction', 'time_window']).agg({'actual_headways':list, 'scheduled_headway': list, TARGET: list})
     
@@ -94,6 +97,7 @@ def setup_any_day_data(DATE_TO_PREDICT, past_df, darksky, holidays_df, speed_df,
     a['day'] = pd.Timestamp(DATE_TO_PREDICT).day
     a['dayofweek'] = DAY_OF_WEEK
     a['is_holiday'] = not holidays_df[holidays_df['Date'] == pd.Timestamp(DATE_TO_PREDICT)].empty
+    a['is_school_break'] = not school_break_df[school_break_df['Date'] == pd.Timestamp(DATE_TO_PREDICT)].empty
     a['sched_hdwy95'] = a['scheduled_headway'].apply(lambda x: np.max(x))
 
     a = a.drop(['actual_headways', 'scheduled_headway', TARGET], axis=1)
@@ -105,13 +109,14 @@ def setup_any_day_data(DATE_TO_PREDICT, past_df, darksky, holidays_df, speed_df,
 def setup_input_data(DATE_TO_PREDICT, past_df, model_type='any_day'):
     darksky = load_weather_data()
     holidays_df = load_holiday_data()
+    school_break_df = load_school_break_data()
     speed_df = load_speed_data()
-    input_df = setup_any_day_data(DATE_TO_PREDICT, past_df, darksky, holidays_df, speed_df, TARGET='y_reg100')
+    input_df = setup_any_day_data(DATE_TO_PREDICT, past_df, darksky, holidays_df, school_break_df, speed_df, TARGET='y_reg100')
     return input_df
 
 # Convert to the same format as the model input
 def prepare_any_day_for_prediction(input_df, train_columns, ix_map, ohe_encoder):
-    cat_features = ['route_id_direction', 'is_holiday', 'dayofweek']
+    cat_features = ['route_id_direction', 'is_holiday', 'dayofweek', 'is_school_break']
     ord_features = ['year', 'month', 'hour', 'day']
     num_features = ['temperature', 'humidity', 'precipitation_intensity', 'avg_sched_headway', 'time_window', 'traffic_speed']
     

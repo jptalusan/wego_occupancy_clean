@@ -62,7 +62,7 @@ get_columns = ['trip_id', 'transit_date', 'arrival_time',
                'darksky_precipitation_probability', 
                'route_direction_name', 'route_id',
                'dayofweek',  'year', 'month', 'hour',
-               'sched_hdwy']
+               'sched_hdwy', 'zero_load_at_trip_end']
 get_str = ", ".join([c for c in get_columns])
 
 apcdataafternegdelete.createOrReplaceTempView("apc")
@@ -75,6 +75,7 @@ FROM apc
 print(query)
 
 apcdataafternegdelete = spark.sql(query)
+apcdataafternegdelete = apcdataafternegdelete.na.fill(value=0,subset=["zero_load_at_trip_end"])
 df = apcdataafternegdelete.toPandas()
 print(df.shape)
 df = df[df.arrival_time.notna()]
@@ -93,6 +94,14 @@ holidays_df['Date'] = pd.to_datetime(holidays_df['Date'])
 holidays_df['is_holiday'] = True
 df = df.merge(holidays_df[['Date', 'is_holiday']], left_on='transit_date', right_on='Date', how='left')
 df['is_holiday'] = df['is_holiday'].fillna(False)
+df = df.drop(columns=['Date'])
+    
+# School breaks
+fp = os.path.join('../data', 'others', 'School Breaks (2019-2022).pkl')
+school_break_df = pd.read_pickle(fp)
+school_break_df['is_school_break'] = True
+df = df.merge(school_break_df[['Date', 'is_school_break']], left_on='transit_date', right_on='Date', how='left')
+df['is_school_break'] = df['is_school_break'].fillna(False)
 df = df.drop(columns=['Date'])
 
 # Traffic
@@ -141,7 +150,9 @@ overall_df = overall_df.groupby(['transit_date',
                                                       "day": "first",
                                                       "hour":"first",
                                                       "is_holiday": "first",
+                                                      "is_school_break":"first",
                                                       "dayofweek":"first",
+                                                      "zero_load_at_trip_end":"first",
                                                       "stop_sequence":"first",
                                                       "darksky_temperature":"mean", 
                                                       "darksky_humidity":"mean",
@@ -175,7 +186,7 @@ target = 'y_class'
 
 num_columns = ['darksky_temperature', 'darksky_humidity', 'darksky_precipitation_probability', 'sched_hdwy', 'traffic_speed']
 cat_columns = ['month', 'hour', 'day', 'stop_sequence', 'stop_id_original', 'year', 'time_window', target]
-ohe_columns = ['dayofweek', 'route_id_dir', 'is_holiday']
+ohe_columns = ['dayofweek', 'route_id_dir', 'is_holiday', 'is_school_break', 'zero_load_at_trip_end']
 
 ohe_encoder, label_encoder, num_scaler, train_df, val_df, test_df = linklevel_utils.prepare_linklevel(overall_df, 
                                                                                                       train_dates=train_dates, 
@@ -189,6 +200,10 @@ ohe_encoder, label_encoder, num_scaler, train_df, val_df, test_df = linklevel_ut
                                                                                                       scaler='minmax')
 
 test_df['unique_trip'] = test_df['trip_id'] + '_' + test_df['transit_date'].dt.strftime('%Y-%m-%d')
+
+fp = os.path.join('../models/same_day/evaluation/random_trip_ids_2000.pkl')
+with open(fp, 'rb') as f:
+    random_trip_ids = pickle.load(f)
 
 drop_cols = ['transit_date', 'load', 'arrival_time', 'trip_id']
 drop_cols = [col for col in drop_cols if col in train_df.columns]
@@ -214,15 +229,11 @@ def generate_simple_lstm_predictions(input_df, model, future):
     return predictions
 
 PAST = 5
-fp = os.path.join('../models/same_day/evaluation/random_trip_ids_2000.pkl')
-with open(fp, 'rb') as f:
-    random_trip_ids = pickle.load(f)
-    
 # Load models
 num_features = len(test_df.columns) - 1
 simple_lstm = linklevel_utils.setup_simple_lstm_generator(num_features, len(test_df.y_class.unique()))
 # Load model
-latest = tf.train.latest_checkpoint('../models/same_day/model')
+latest = tf.train.latest_checkpoint('../models/same_day/school_zero_load')
 
 print(latest)
 simple_lstm.load_weights(latest)
@@ -244,9 +255,21 @@ for unique_trip_id in tqdm(random_trip_ids):
     results.append(res_df)
     
 res_df = pd.concat(results)
-fp = os.path.join('../models/same_day/evaluation', f'SIMPLE_LSTM_multi_stop_{PAST}P_xF_results.pkl')
+fp = os.path.join('../models/same_day/evaluation', f'SIMPLE_LSTM_multi_stop_{PAST}P_xF_results_school_break.pkl')
 res_df.to_pickle(fp)
 
+# Just gets max of past rows
+def generate_simple_baseline_predictions(input_df, past, future):
+    prediction = []
+    past_df = input_df[:past]
+    future_df = input_df[past:]
+    for f in range(future):
+        y_pred = past_df['y_class'].max()
+        prediction.append(y_pred)
+        last_row = future_df.iloc[[0]]
+        past_df = pd.concat([past_df[1:past], last_row])
+        future_df = future_df.iloc[1: , :]
+    return prediction
 
 # Get max of past loads from the same stop sequence/trip/
 def generate_stop_level_baseline(unique_trip_id, past, future, lookback=10):
@@ -263,10 +286,10 @@ def generate_stop_level_baseline(unique_trip_id, past, future, lookback=10):
     prediction_ave = []
     for stop_sequence in range(future):
         load = df[(df['route_id_dir'] == route_id_dir) & 
-                      (df['stop_sequence'] == stop_sequence) & 
-                      (df['hour'] == hour) & 
-                      (df['block_abbr'] == block_abbr) & 
-                      (df['dayofweek'] == dayofweek)].sort_values(by='transit_date')[-lookback:]['load']
+                  (df['stop_sequence'] == stop_sequence) & 
+                  (df['hour'] == hour) & 
+                  (df['block_abbr'] == block_abbr) & 
+                  (df['dayofweek'] == dayofweek)].sort_values(by='transit_date')[-lookback:]['load']
         max_load = load.max()
         ave_load = load.mean()
         y_pred = data_utils.get_class(max_load, percentiles)
@@ -289,5 +312,22 @@ for unique_trip_id in tqdm(random_trip_ids):
 
 res_df = pd.concat(results)
 
-fp = os.path.join('../models/same_day/evaluation', f'baseline_multi_stop_{PAST}P_xF_results.pkl')
+fp = os.path.join('../models/same_day/evaluation', f'baseline_multi_stop_{PAST}P_xF_results_school_break.pkl')
+res_df.to_pickle(fp)
+
+PAST = 10
+results = []
+for unique_trip_id in tqdm(random_trip_ids):
+    trip_df = test_df[test_df['unique_trip'] == unique_trip_id]
+    if trip_df.empty:
+        continue
+    future = len(trip_df) - PAST
+    y_true = trip_df.iloc[PAST:].y_class.tolist()
+    y_pred = generate_simple_baseline_predictions(trip_df, PAST, future)
+    res_df = pd.DataFrame(np.column_stack(([unique_trip_id]*future, y_true, y_pred)), columns=['trip_id', 'y_true', 'y_pred'])
+    results.append(res_df)
+
+res_df = pd.concat(results)
+
+fp = os.path.join('../models/same_day/evaluation', f'simple_baseline_multi_stop_{PAST}P_xF_results_school_break.pkl')
 res_df.to_pickle(fp)

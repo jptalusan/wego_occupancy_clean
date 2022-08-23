@@ -26,6 +26,7 @@ df = df.dropna()
 # Removing time_window in case a different one will be used
 df = df.drop(['time_window', 'load'], axis=1)
 df = df.reset_index(drop=True)
+df = df.sort_values(['block_abbr', 'transit_date', 'arrival_time', 'route_id_direction'])
 
 FOLDS = 5
 RANDOM_SEED = 100
@@ -33,7 +34,7 @@ WINDOW = 30
 PAST_TRIPS = 5
 TARGET = 'y_reg100'
 
-cat_features = ['route_id_direction', 'is_holiday', 'dayofweek']
+cat_features = ['route_id_direction', 'is_holiday', 'dayofweek', 'is_school_break']
 ord_features = ['year', 'month', 'hour', 'day']
 num_features = ['temperature', 'humidity', 'precipitation_intensity', 'avg_sched_headway', 'time_window', 'traffic_speed']
 
@@ -43,6 +44,7 @@ tdf = tdf.groupby(['transit_date', 'route_id_direction', 'time_window']).agg({"y
                                                                               "day": "first",
                                                                               "hour":"first",
                                                                               "is_holiday": "first",
+                                                                              "is_school_break": "first",
                                                                               "dayofweek":"first",
                                                                               "temperature":"mean", 
                                                                               "humidity":"mean",
@@ -52,7 +54,7 @@ tdf = tdf.groupby(['transit_date', 'route_id_direction', 'time_window']).agg({"y
 tdf = tdf.reset_index(level=[0,1,2])
 print("ohe_encoder is for the following column order:", cat_features)
 rf_df, ix_map, ohe_encoder, percentiles = triplevel_utils.prepare_df_for_training(tdf, cat_features, ord_features, target=TARGET)
-drop_cols = ['route_id', 'route_direction_name', 'block_abbr', 'y_reg100', 'y_reg095', 'transit_date', 'is_holiday', 'route_id_direction', 'actual_headways', 'trip_id', 'arrival_time']
+drop_cols = ['route_id', 'route_direction_name', 'block_abbr', 'y_reg100', 'y_reg095', 'transit_date', 'is_holiday', 'route_id_direction', 'actual_headways', 'trip_id', 'arrival_time', 'is_school_break']
 drop_cols = [col for col in drop_cols if col in rf_df.columns]
 rf_df = rf_df.drop(drop_cols, axis=1)
 
@@ -81,7 +83,7 @@ parameters = {
     'max_depth': list(range (2, 24, 6)),
     'n_estimators': list(range(100, 1100, 400)),
     'learning_rate': [0.1, 0.01, 0.05, 0.005],
-    'gamma': [0.05, 0.1, 0.2]
+    'gamma': [0, 0.05, 0.1, 0.2]
 }
 
 grid_search = RandomizedSearchCV(
@@ -96,5 +98,63 @@ grid_search = RandomizedSearchCV(
 
 result = grid_search.fit(X, y)
 
-fp = os.path.join('../models', 'any_day', 'XGBOOST_RANDSEARCHCV_any_day.pkl')
+fp = os.path.join('../models', 'any_day', 'XGBOOST_RANDSEARCHCV_any_day_with_schoolbreak012.joblib')
+joblib.dump(result, fp)
+
+#### 234 bins ####
+
+rf_df, ix_map, ohe_encoder, percentiles = triplevel_utils.prepare_df_for_training(tdf, cat_features, ord_features, target=TARGET)
+
+# Train 2 separate models for bins 0, 1, 2 and 2, 3, 4
+# Adjusting y_class to incorporate Dan's request
+# Use Transit's 3 bins as a base. For the highest capacity bin, carve out everything from 55 to 75 as a 4th bin, and 75+ as a 5th bin.
+
+rf_df, percentiles = triplevel_utils.adjust_bins(rf_df, TARGET=TARGET, percentiles=percentiles)
+drop_cols = ['route_id', 'route_direction_name', 'block_abbr', 'y_reg100', 'y_reg095', 'transit_date', 'is_holiday', 'route_id_direction', 'is_school_break']
+drop_cols = [col for col in drop_cols if col in rf_df.columns]
+rf_df = rf_df.drop(drop_cols, axis=1)
+rf_df = rf_df[rf_df['y_class'] >= 2]
+
+y = rf_df.pop('y_class')
+y = y - 2
+X = rf_df
+
+model = xgb.XGBClassifier(num_class=3, 
+                          seed=RANDOM_SEED, 
+                          objective='multi:softmax', 
+                          eval_metric='mlogloss', 
+                          use_label_encoder=False)
+
+skf = StratifiedKFold(n_splits=FOLDS, 
+                      random_state=RANDOM_SEED, 
+                      shuffle=True)
+
+
+# parameters = {
+#     'max_depth': [1],
+#     'n_estimators': [1],
+#     'learning_rate': [1],
+#     'gamma': [1]
+# }
+
+parameters = {
+    'max_depth': list(range (2, 24, 6)),
+    'n_estimators': list(range(100, 1100, 400)),
+    'learning_rate': [0.1, 0.01, 0.05, 0.005],
+    'gamma': [0, 0.05, 0.1, 0.2]
+}
+
+grid_search = RandomizedSearchCV(
+    n_iter = 5,
+    estimator = model,
+    param_distributions=parameters,
+    scoring = 'accuracy',
+    n_jobs = -1,
+    cv = skf,
+    verbose=True
+)
+
+result = grid_search.fit(X, y)
+
+fp = os.path.join('../models', 'any_day', 'XGBOOST_RANDSEARCHCV_any_day_with_schoolbreak234.joblib')
 joblib.dump(result, fp)
