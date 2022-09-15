@@ -101,6 +101,7 @@ for year in [2020, 2021, 2022]:
         if (year == 2022) and (month >= 3):
             continue
         
+        # from get_traffic_data_for_segs.py
         fp = os.path.join(traffic_save_dir, f"inrix_speed_30M_resampled_{year}_{month}.gz")
         traffic_estimate_df = pd.read_parquet(fp, engine='auto')
         traffic_estimate_df['time_window'] = traffic_estimate_df['measurement_tstamp'].apply(lambda x: get_time_window(x, WINDOW))

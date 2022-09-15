@@ -192,6 +192,10 @@ def build_model(
     outputs = Dense(num_classes, activation="softmax")(x)
     return keras.Model(inputs, outputs)
 
+# def prepare_test_linklevel(test_df, ohe_encoder, num_scaler, label_encoder,
+#                            cat_columns=None, num_columns=None, ohe_columns=None, feature_label='load'):
+#     test_df[ohe_encoder.get_feature_names_out()] = ohe_encoder.transform(test_df[ohe_columns]).toarray()
+    
 def prepare_linklevel(df, train_dates=None, val_dates=None, test_dates=None,
                       cat_columns=None, num_columns=None, ohe_columns=None,
                       feature_label='load', time_feature_used='arrival_time', scaler='minmax'):
@@ -202,7 +206,7 @@ def prepare_linklevel(df, train_dates=None, val_dates=None, test_dates=None,
     ohe_encoder = OneHotEncoder()
     ohe_encoder = ohe_encoder.fit(df[ohe_columns])
     df[ohe_encoder.get_feature_names_out()] = ohe_encoder.transform(df[ohe_columns]).toarray()
-    df = df.drop(ohe_columns, axis=1)
+    # df = df.drop(ohe_columns, axis=1)
         
     train_df = df[(df[time_feature_used] >= train_dates[0]) &\
                   (df[time_feature_used] <= train_dates[1])]
@@ -218,7 +222,7 @@ def prepare_linklevel(df, train_dates=None, val_dates=None, test_dates=None,
     print("Test df: ", test_df.shape)
 
     drop_cols = list(filter(lambda x: x not in all_used_columns, df.columns.tolist()))
-    print(f"Columns to drop: {drop_cols}")
+    # print(f"Columns to drop: {drop_cols}")
     # train_df = train_df.drop(drop_cols, axis=1)
     # val_df = val_df.drop(drop_cols, axis=1)
     # test_df = test_df.drop(drop_cols, axis=1)
@@ -238,9 +242,13 @@ def prepare_linklevel(df, train_dates=None, val_dates=None, test_dates=None,
     else:
         scaler = StandardScaler()
     scaler = scaler.fit(train_df[num_columns])
-    train_df[num_columns] = scaler.transform(train_df[num_columns])
-    val_df[num_columns] = scaler.transform(val_df[num_columns])
-    test_df[num_columns] = scaler.transform(test_df[num_columns])
+    
+    if len(train_df) > 0:
+        train_df[num_columns] = scaler.transform(train_df[num_columns])
+    if len(val_df) > 0:        
+        val_df[num_columns] = scaler.transform(val_df[num_columns])
+    if len(test_df) > 0:
+        test_df[num_columns] = scaler.transform(test_df[num_columns])
 
     return ohe_encoder, label_encoders, scaler, train_df, val_df, test_df
 

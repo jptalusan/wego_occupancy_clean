@@ -21,6 +21,7 @@ import sys
 sys.path.insert(0,'..')
 from src import tf_utils, config, data_utils, models, linklevel_utils
 import logging
+from itertools import product
 
 from tensorflow.keras import backend as K
 K.clear_session()
@@ -444,7 +445,34 @@ if __name__ == "__main__":
                         datefmt='%Y-%m-%d %H:%M:%S', 
                         filename='../models/same_day/gridsearch/gridsearch.log', 
                         encoding='utf-8')
-    configs = [
+    
+    past = [1, 3, 5, 7, 9, 11]
+    time_window = [10, 20, 30, 40, 50, 60]
+    # layer = [64, 128, 256]
+    # batch_size = [256, 512]
+    # learning_rate = [0.1, 0.01, 0.001, 0.0001]
+    layer = [128]
+    batch_size = [256]
+    learning_rate = [0.01]
+    epochs = [10]
+    configs = [dict(zip(('past',
+            'time_window', 
+            'layer',
+            'batch_size',
+            'learning_rate',
+            'epochs'), (_past, 
+                        _time_window, 
+                        _layer,
+                        _batch_size,
+                        _learning_rate,
+                        _epochs))) for _past, _time_window, _layer, _batch_size, _learning_rate, _epochs in product(past, 
+                                                                                                                    time_window, 
+                                                                                                                    layer,
+                                                                                                                    batch_size,
+                                                                                                                    learning_rate,
+                                                                                                                    epochs)]
+
+    # configs = [
         # {'past': 5,
         # 'epochs': 10,
         # 'lstm_layer': 128,
@@ -481,29 +509,29 @@ if __name__ == "__main__":
         # 'learning_rate': 0.01,
         # 'batch_size': 256},
         
-        {'past': 5,
-        'epochs': 10,
-        'lstm_layer': 256,
-        'learning_rate': 0.1,
-        'batch_size': 256},
+        # {'past': 5,
+        # 'epochs': 10,
+        # 'lstm_layer': 256,
+        # 'learning_rate': 0.1,
+        # 'batch_size': 256},
         
-        {'past': 1,
-        'epochs': 10,
-        'lstm_layer': 256,
-        'learning_rate': 0.1,
-        'batch_size': 256},
+        # {'past': 1,
+        # 'epochs': 10,
+        # 'lstm_layer': 256,
+        # 'learning_rate': 0.1,
+        # 'batch_size': 256},
         
-        {'past': 1,
-        'epochs': 10,
-        'lstm_layer': 256,
-        'learning_rate': 0.01,
-        'batch_size': 256},
+        # {'past': 1,
+        # 'epochs': 10,
+        # 'lstm_layer': 256,
+        # 'learning_rate': 0.01,
+        # 'batch_size': 256},
         
-        {'past': 1,
-        'epochs': 10,
-        'lstm_layer': 256,
-        'learning_rate': 0.001,
-        'batch_size': 256}
-    ]
+        # {'past': 1,
+        # 'epochs': 10,
+        # 'lstm_layer': 256,
+        # 'learning_rate': 0.001,
+        # 'batch_size': 256}
+    # ]
 
     main(configs)
