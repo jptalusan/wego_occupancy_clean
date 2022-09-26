@@ -36,6 +36,7 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 tf.get_logger().setLevel('INFO')
 importlib.reload(tf_utils)
 importlib.reload(models)
+from multiprocessing import Process, Queue, cpu_count, Manager
 
 spark = SparkSession.builder.config('spark.executor.cores', '8').config('spark.executor.memory', '80g')\
     .config("spark.sql.session.timeZone", "UTC").config('spark.driver.memory', '40g').master("local[26]")\
@@ -54,6 +55,16 @@ class dotdict(dict):
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
     
+train_dates = ('2020-01-01', '2021-06-30')
+val_dates =   ('2021-06-30', '2021-10-31')
+test_dates =  ('2021-10-31', '2022-04-06')
+
+target = 'y_class'
+
+num_columns = ['darksky_temperature', 'darksky_humidity', 'darksky_precipitation_probability', 'sched_hdwy', 'traffic_speed']
+cat_columns = ['month', 'hour', 'day', 'stop_sequence', 'stop_id_original', 'year', 'time_window', target]
+ohe_columns = ['dayofweek', 'route_id_dir', 'is_holiday', 'is_school_break', 'zero_load_at_trip_end']
+
 def setup_data():
     f = os.path.join('../data', 'processed', 'apc_weather_gtfs.parquet')
     apcdata = spark.read.load(f)
@@ -189,16 +200,6 @@ def setup_data():
     overall_df[config.TARGET_COLUMN_CLASSIFICATION] = overall_df['load'].apply(lambda x: data_utils.get_class(x, percentiles))
     overall_df = overall_df[overall_df[config.TARGET_COLUMN_CLASSIFICATION].notna()]
 
-    train_dates = ('2020-01-01', '2021-06-30')
-    val_dates =   ('2021-06-30', '2021-10-31')
-    test_dates =  ('2021-10-31', '2022-04-06')
-
-    target = 'y_class'
-
-    num_columns = ['darksky_temperature', 'darksky_humidity', 'darksky_precipitation_probability', 'sched_hdwy', 'traffic_speed']
-    cat_columns = ['month', 'hour', 'day', 'stop_sequence', 'stop_id_original', 'year', 'time_window', target]
-    ohe_columns = ['dayofweek', 'route_id_dir', 'is_holiday', 'is_school_break', 'zero_load_at_trip_end']
-
     ohe_encoder, label_encoder, num_scaler, train_df, val_df, test_df = linklevel_utils.prepare_linklevel(overall_df, 
                                                                                                           train_dates=train_dates, 
                                                                                                           val_dates=val_dates, 
@@ -261,6 +262,12 @@ def train(hyperparams, train_df, val_df):
         
         return ds.batch(batch_size)
 
+    drop_cols = ohe_columns
+    drop_cols = [col for col in drop_cols if col in train_df.columns]
+    train_df = train_df.drop(drop_cols, axis=1)
+    val_df = val_df.drop(drop_cols, axis=1)
+
+    print(f"Training: {train_df.shape}")
     dataset_train = timeseries_dataset_from_dataset(train_df, 
                                                     feature_slice=feature_slice,
                                                     label_slice=label_slice,
@@ -317,7 +324,6 @@ def train(hyperparams, train_df, val_df):
     return history
 
 def evaluation(hyperparams, test_df):
-    print(f"Evalulation: {test_df.shape}")
     
     target = 'y_class'
     
@@ -327,13 +333,14 @@ def evaluation(hyperparams, test_df):
     with open(fp, 'rb') as f:
         random_trip_ids = pickle.load(f)
 
-    drop_cols = ['transit_date', 'load', 'arrival_time', 'trip_id']
+    drop_cols = ['transit_date', 'load', 'arrival_time', 'trip_id'] + ohe_columns
     drop_cols = [col for col in drop_cols if col in test_df.columns]
     test_df = test_df.drop(drop_cols, axis=1)
 
     arrange_cols = [target] + [col for col in test_df.columns if col != target]
     test_df = test_df[arrange_cols]
 
+    print(f"Evalulation: {test_df.shape}")
     def generate_simple_lstm_predictions(input_df, model, future):
         predictions = []
         for f in range(future):
@@ -398,6 +405,111 @@ def evaluation(hyperparams, test_df):
     res_df.to_pickle(fp)
     return
 
+
+# def evaluation_parallel(hyperparams, test_df):
+    
+#     target = 'y_class'
+    
+#     test_df['unique_trip'] = test_df['trip_id'] + '_' + test_df['transit_date'].dt.strftime('%Y-%m-%d')
+
+#     fp = os.path.join('../models/same_day/evaluation/random_trip_ids_2000.pkl')
+#     with open(fp, 'rb') as f:
+#         random_trip_ids = pickle.load(f)
+
+#     drop_cols = ['transit_date', 'load', 'arrival_time', 'trip_id'] + ohe_columns
+#     drop_cols = [col for col in drop_cols if col in test_df.columns]
+#     test_df = test_df.drop(drop_cols, axis=1)
+
+#     arrange_cols = [target] + [col for col in test_df.columns if col != target]
+#     test_df = test_df[arrange_cols]
+
+#     print(f"Evalulation: {test_df.shape}")
+
+#     # Load models
+#     num_features = len(test_df.columns) - 1 # subtract `unique_trip`
+#     num_classes  = len(test_df.y_class.unique())
+    
+#     simple_lstm = tf.keras.Sequential()
+#     simple_lstm.add(LSTM(hyperparams.lstm_layer, return_sequences=True))
+#     simple_lstm.add(LSTM(hyperparams.lstm_layer))
+#     simple_lstm.add(Dropout(0.2))
+#     simple_lstm.add(Dense(128, activation='relu'))
+#     simple_lstm.add(Dropout(0.2))
+#     simple_lstm.add(Dense(64, activation='relu'))
+#     simple_lstm.add(Dense(num_classes, activation='softmax'))
+
+#     # compile model
+#     simple_lstm.compile(
+#         loss="sparse_categorical_crossentropy",
+#         optimizer=keras.optimizers.Adam(learning_rate=hyperparams.learning_rate),
+#         metrics=["sparse_categorical_accuracy"],
+#     )
+
+#     input_shape = (None, None, num_features)
+#     simple_lstm.build(input_shape)
+    
+#     # Load model
+    
+#     latest = tf.train.latest_checkpoint(hyperparams.path)
+
+#     print(latest)
+#     simple_lstm.load_weights(latest)
+
+#     PAST = hyperparams.past
+#     results = []
+    
+#     queue = Queue()
+#     for random_trip_id in random_trip_ids:
+#         queue.put(random_trip_id)
+        
+#     with Manager() as manager:
+#         L = manager.list()
+        
+#         # Spawn two processes, assigning the method to be executed 
+#         # and the input arguments (the queue)
+#         processes = [Process(target=process_lsm_prediction, args=(simple_lstm, test_df, PAST, L, queue,)) for _ in range(cpu_count() - 1)]
+
+#         for process in processes:
+#             process.start()
+
+#         for process in processes:
+#             process.join()
+
+#         res_df = pd.concat(L)
+
+#         # fp = os.path.join(hyperparams.path, f'{hyperparams.time_window}_results.pkl')
+#         fp = os.path.join(hyperparams.path, f'EVAL_{hyperparams.time_window}_{hyperparams.past}_{hyperparams.lstm_layer}_{hyperparams.learning_rate}_{hyperparams.batch_size}.pkl')
+#         res_df.to_pickle(fp)
+
+# def generate_simple_lstm_predictions(input_df, model, future):
+#     predictions = []
+#     for f in range(future):
+#         pred = model.predict(input_df.to_numpy().reshape(1, *input_df.shape))
+#         y_pred = np.argmax(pred)
+#         predictions.append(y_pred)
+#         last_row = input_df.iloc[[-1]]
+#         last_row['y_class'] = y_pred
+#         last_row['stop_sequence'] = last_row['stop_sequence'] + 1
+#         input_df = pd.concat([input_df[1:], last_row])
+#     return predictions
+
+# def process_lsm_prediction(model, test_df, past, L, queue):
+#     while queue.qsize() > 0 :
+#         random_trip = queue.get()
+#         trip_df = test_df[test_df['unique_trip'] == random_trip]
+#         drop_cols = ['trip_id', 'transit_date', 'unique_trip']
+#         drop_cols = [col for col in drop_cols if col in trip_df.columns]
+#         trip_df = trip_df.drop(drop_cols, axis=1)
+        
+#         future = len(trip_df) - past
+#         past_df = trip_df.iloc[0:past]
+        
+#         y_true = trip_df.iloc[past:].y_class.tolist()
+#         y_pred = generate_simple_lstm_predictions(past_df, model, future)
+        
+#         res_df = pd.DataFrame(np.column_stack(([random_trip]*future, y_true, y_pred)), columns=['trip_id', 'y_true', 'y_pred'])
+#         L.append(res_df)
+    
 def namespace_to_dict(namespace):
     return {
         k: namespace_to_dict(v) if isinstance(v, argparse.Namespace) else v
@@ -409,7 +521,7 @@ def main(configs):
     ohe_encoder, label_encoder, num_scaler, train_df, val_df, test_df = setup_data()
     for config in configs:
         config = dotdict(config)
-        OUTPUT_NAME = f"{config.past}_{config.lstm_layer}_{config.learning_rate}_{config.batch_size}"
+        OUTPUT_NAME = f"{config.time_window}_{config.past}_{config.lstm_layer}_{config.learning_rate}_{config.batch_size}"
         OUTPUT_PATH = os.path.join(OUTPUT_DIR, OUTPUT_NAME)
         Path(OUTPUT_PATH).mkdir(parents=True, exist_ok=True)
         config.path = OUTPUT_PATH
@@ -418,7 +530,8 @@ def main(configs):
         logging.info("Start training...")
         train(config, train_df, val_df)
         logging.info("Start evauating...")
-        evaluation(config, test_df)
+        # evaluation_parallel(config, test_df)
+        # evaluation(config, test_df)
     logging.info("Done...")
         
     # parser = argparse.ArgumentParser()
@@ -441,7 +554,7 @@ def main(configs):
     
 if __name__ == "__main__":        
     logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s',
-                        level=logging.INFO,
+                        level=logging.DEBUG,
                         datefmt='%Y-%m-%d %H:%M:%S', 
                         filename='../models/same_day/gridsearch/gridsearch.log', 
                         encoding='utf-8')
@@ -454,10 +567,10 @@ if __name__ == "__main__":
     layer = [128]
     batch_size = [256]
     learning_rate = [0.01]
-    epochs = [10]
+    epochs = [1]
     configs = [dict(zip(('past',
             'time_window', 
-            'layer',
+            'lstm_layer',
             'batch_size',
             'learning_rate',
             'epochs'), (_past, 
@@ -471,7 +584,6 @@ if __name__ == "__main__":
                                                                                                                     batch_size,
                                                                                                                     learning_rate,
                                                                                                                     epochs)]
-
     # configs = [
         # {'past': 5,
         # 'epochs': 10,
