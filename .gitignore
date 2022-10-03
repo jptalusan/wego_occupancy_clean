@@ -368,3 +368,4 @@ notebooks/data
 test.ipynb
 failed_offs_model.ipynb
 try_offs.ipynb
+notebooks/dont_commit/
